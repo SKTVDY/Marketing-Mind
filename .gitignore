@@ -20,3 +20,13 @@ Thumbs.db
 
 # Temporary files
 *.log
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
