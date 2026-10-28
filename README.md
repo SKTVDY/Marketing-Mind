@@ -1,5 +1,11 @@
 # Marketing Mind — "Predict, Then Optimize" MMM Platform
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://marketing-mind-ai.streamlit.app/)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/SKTVDY/Marketing-Mind)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-brightgreen?logo=python)](https://www.python.org/)
+
+🔗 **Live Web Application:** [https://marketing-mind-ai.streamlit.app/](https://marketing-mind-ai.streamlit.app/)
+
 Marketing Mind is an end-to-end Marketing Mix Modeling (MMM) and budget allocation engine built in Python. It models historical carryover effects (**Adstock**) and non-linear diminishing returns (**Saturation Curves**), tunes hyperparameters using leakage-safe **TimeSeriesSplit cross-validation**, and feeds learned empirical regression parameters directly into **SciPy SLSQP** to solve optimal cross-channel spend distributions.
 
 ---
