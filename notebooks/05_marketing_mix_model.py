@@ -1,151 +1,86 @@
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.model_trainer import MarketingMixModel
 
-
-
-df = pd.read_csv("data/mmm_example.csv")
-
+# ==========================================
+# 1. LOAD DATA
+# ==========================================
+data_path = PROJECT_ROOT / "data" / "mmm_example.csv"
+df = pd.read_csv(data_path)
 df["date_week"] = pd.to_datetime(df["date_week"])
 df = df.sort_values("date_week").reset_index(drop=True)
 
 print("Dataset loaded successfully!")
 print("Dataset shape:", df.shape)
 
-
-
-def calculate_adstock(series, decay_rate=0.5):
-    """
-    Previous marketing activity carries over
-    into subsequent weeks.
-
-    decay_rate controls how quickly the
-    previous activity loses its influence.
-    """
-    values = series.to_numpy()
-    adstock = np.zeros(len(values))
-
-    adstock[0] = values[0]
-
-    for i in range(1, len(values)):
-        adstock[i] = values[i] + decay_rate * adstock[i - 1]
-
-    return adstock
-
-
-df["x1_adstock"] = calculate_adstock(df["x1"], 0.5)
-df["x2_adstock"] = calculate_adstock(df["x2"], 0.5)
-
-
-def saturation(series):
-    return series / (series.max() + 1e-8)
-
-df["x1_saturated"] = saturation(df["x1_adstock"])
-df["x2_saturated"] = saturation(df["x2_adstock"])
-
-
-
-features = [
-    "x1_saturated",
-    "x2_saturated",
-    "event_1",
-    "event_2",
-    "dayofyear",
-    "t"
-]
-
-X = df[features]
-y = df["y"]
-
-
-
+# ==========================================
+# 2. CHRONOLOGICAL SPLIT (80% TRAIN / 20% TEST)
+# ==========================================
 split_index = int(len(df) * 0.8)
+train_df = df.iloc[:split_index].copy()
+test_df = df.iloc[split_index:].copy()
 
-X_train = X.iloc[:split_index]
-X_test = X.iloc[split_index:]
+print(f"\nTraining observations: {len(train_df)}")
+print(f"Testing observations : {len(test_df)}")
 
-y_train = y.iloc[:split_index]
-y_test = y.iloc[split_index:]
+# ==========================================
+# 3. FIT MARKETING MIX MODEL WITH SATURATION
+# ==========================================
+model = MarketingMixModel(decay_rate=0.4, sat_type="log")
+model.fit(train_df)
 
-print("\nTraining observations:", len(X_train))
-print("Testing observations:", len(X_test))
+eval_metrics = model.evaluate(test_df)
 
+print("\n========== MARKETING MIX MODEL EVALUATION (HOLD-OUT TEST) ==========")
+print(f"MAE :  {eval_metrics['MAE']:.2f}")
+print(f"RMSE:  {eval_metrics['RMSE']:.2f}")
+print(f"R²  :  {eval_metrics['R2']:.4f}")
 
+params = model.get_channel_parameters()
+print("\n========== LEARNED CHANNEL RESPONSE PARAMETERS ==========")
+print(f"Channel 1 Effectiveness (Beta 1): {params['beta_1']:.4f}")
+print(f"Channel 2 Effectiveness (Beta 2): {params['beta_2']:.4f}")
+print(f"Channel 1 Saturation Scale (K1): {params['scale_1']:.4f}")
+print(f"Channel 2 Saturation Scale (K2): {params['scale_2']:.4f}")
+print(f"Saturation Curve: {params['sat_type'].upper()}")
+print(f"Adstock Decay Factor (Decay Rate): {params['decay_rate']}")
+print(f"Baseline Outcome (Intercept + Controls): {params['baseline_outcome']:.2f}")
 
-
-model = LinearRegression()
-
-model.fit(X_train, y_train)
-
-y_pred = model.predict(X_test)
-
-
-
-mae = mean_absolute_error(y_test, y_pred)
-
-rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-
-r2 = r2_score(y_test, y_pred)
-
-print("\n========== MARKETING MIX MODEL ==========")
-
-print(f"MAE:  {mae:.2f}")
-print(f"RMSE: {rmse:.2f}")
-print(f"R²:   {r2:.4f}")
-
-
-
-print("\n========== MODEL COEFFICIENTS ==========")
-
-for feature, coefficient in zip(features, model.coef_):
-    print(f"{feature:20s}: {coefficient:.4f}")
-
-print(f"{'Intercept':20s}: {model.intercept_:.4f}")
-
-
-
-
+# ==========================================
+# 4. PLOT ACTUAL VS PREDICTED OUTCOMES
+# ==========================================
+test_predictions = model.predict(test_df)
 results = pd.DataFrame({
-    "date_week": df["date_week"].iloc[split_index:].values,
-    "actual": y_test.values,
-    "predicted": y_pred
+    "date_week": test_df["date_week"].values,
+    "actual": test_df["y"].values,
+    "predicted": test_predictions,
 })
 
 plt.figure(figsize=(12, 5))
-
-plt.plot(
-    results["date_week"],
-    results["actual"],
-    marker="o",
-    label="Actual"
-)
-
-plt.plot(
-    results["date_week"],
-    results["predicted"],
-    marker="x",
-    label="Predicted"
-)
-
-plt.title("Marketing Mix Model: Actual vs Predicted")
+plt.plot(results["date_week"], results["actual"], marker="o", label="Actual Outcome")
+plt.plot(results["date_week"], results["predicted"], marker="x", label="Predicted Outcome (MMM)")
+plt.title("Marketing Mix Model: Actual vs Predicted (Held-Out Test Set)")
 plt.xlabel("Week")
 plt.ylabel("Outcome (y)")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
 
-plt.show()
+# Save plot to data/
+plot_path = PROJECT_ROOT / "data" / "mmm_actual_vs_predicted.png"
+plt.savefig(plot_path)
+plt.close()
 
-
-
-
-results.to_csv(
-    "data/mmm_predictions.csv",
-    index=False
-)
-
-print("\nPredictions saved to data/mmm_predictions.csv")
+# Save predictions
+pred_path = PROJECT_ROOT / "data" / "mmm_predictions.csv"
+results.to_csv(pred_path, index=False)
+print(f"\nPredictions saved to {pred_path}")
+print(f"Forecast plot saved to {plot_path}")

@@ -1,113 +1,60 @@
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.model_trainer import MarketingMixModel
 
 # ==========================================
-# 1. LOAD DATA
+# 1. LOAD DATA & CREATE CHRONOLOGICAL SPLIT
 # ==========================================
-
-df = pd.read_csv("data/mmm_example.csv")
-
+data_path = PROJECT_ROOT / "data" / "mmm_example.csv"
+df = pd.read_csv(data_path)
 df["date_week"] = pd.to_datetime(df["date_week"])
 df = df.sort_values("date_week").reset_index(drop=True)
 
-print("Dataset loaded successfully!")
-print("Dataset shape:", df.shape)
-
-
-# ==========================================
-# 2. ADSTOCK FUNCTION
-# ==========================================
-
-def calculate_adstock(series, decay_rate):
-    values = series.to_numpy()
-    adstock = np.zeros(len(values))
-
-    adstock[0] = values[0]
-
-    for i in range(1, len(values)):
-        adstock[i] = values[i] + decay_rate * adstock[i - 1]
-
-    return adstock
-
-
-# ==========================================
-# 3. CHRONOLOGICAL SPLIT
-# ==========================================
-
 split_index = int(len(df) * 0.8)
+train_df = df.iloc[:split_index].copy()
+test_df = df.iloc[split_index:].copy()
 
-train = df.iloc[:split_index].copy()
-test = df.iloc[split_index:].copy()
-
-y_train = train["y"]
-y_test = test["y"]
-
-print("\nTraining observations:", len(train))
-print("Testing observations:", len(test))
-
-
-# ==========================================
-# 4. TEST DIFFERENT DECAY RATES
-# ==========================================
-
-decay_rates = [0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 0.9]
-
-results = []
-
-for decay in decay_rates:
-
-    # Calculate adstock on the complete chronological
-    # series so earlier activity carries into later weeks.
-    x1_adstock = calculate_adstock(df["x1"], decay)
-    x2_adstock = calculate_adstock(df["x2"], decay)
-
-    # Split the transformed data chronologically.
-    X = pd.DataFrame({
-        "x1_saturated": x1_adstock / (x1_adstock.max() + 1e-8),
-        "x2_saturated": x2_adstock / (x2_adstock.max() + 1e-8),
-        "event_1": df["event_1"],
-        "event_2": df["event_2"],
-        "dayofyear": df["dayofyear"],
-        "t": df["t"]
-    })
-
-    X_train = X.iloc[:split_index]
-    X_test = X.iloc[split_index:]
-
-    model = LinearRegression()
-    model.fit(X_train, y_train)
-
-    predictions = model.predict(X_test)
-
-    mae = mean_absolute_error(y_test, predictions)
-    rmse = np.sqrt(mean_squared_error(y_test, predictions))
-    r2 = r2_score(y_test, predictions)
-
-    results.append({
-        "decay_rate": decay,
-        "MAE": mae,
-        "RMSE": rmse,
-        "R2": r2
-    })
+print("=" * 60)
+print("MARKETING MIX MODEL — TIME-SERIES HYPERPARAMETER TUNING")
+print("=" * 60)
+print(f"Total observations : {len(df)}")
+print(f"Training split     : {len(train_df)} weeks (First 80%)")
+print(f"Held-out test split: {len(test_df)} weeks (Final 20% — Sealed)")
 
 # ==========================================
-# 5. DISPLAY RESULTS
+# 2. RUN TIMESERIES SPLIT CV ON TRAINING SET
 # ==========================================
+print("\nRunning 5-fold TimeSeriesSplit cross-validation on training set...")
+decay_candidates = [0.0, 0.2, 0.4, 0.5, 0.6, 0.8]
+sat_candidates = ["none", "log", "hill", "sqrt"]
 
-results_df = pd.DataFrame(results)
-results_df = results_df.sort_values("MAE")
+tuning_results = MarketingMixModel.cross_validate_hyperparameters(
+    train_df,
+    n_splits=5,
+    decay_candidates=decay_candidates,
+    sat_candidates=sat_candidates,
+)
 
-print("\n========== ADSTOCK TUNING RESULTS ==========")
-print(results_df.to_string(index=False))
+print("\n========== TOP HYPERPARAMETER CONFIGURATIONS (BY CV MAE) ==========")
+print(tuning_results.head(10).to_string(index=False))
 
-best_decay = results_df.iloc[0]["decay_rate"]
+best_config = tuning_results.iloc[0]
+print("\n" + "=" * 60)
+print(f"WINNING CONFIGURATION (Selected on Train CV only):")
+print(f"  Decay Rate       : {best_config['decay_rate']}")
+print(f"  Saturation Curve : {best_config['saturation_curve']}")
+print(f"  CV MAE           : {best_config['cv_mae']:.2f}")
+print(f"  CV RMSE          : {best_config['cv_rmse']:.2f}")
+print(f"  CV R²            : {best_config['cv_r2']:.4f}")
+print("=" * 60)
 
-print("\nBest decay rate by MAE:", best_decay)
-
-results_df.to_csv("data/adstock_tuning_results.csv", index=False)
-
-print("\nResults saved to data/adstock_tuning_results.csv")
+output_path = PROJECT_ROOT / "data" / "adstock_tuning_results.csv"
+tuning_results.to_csv(output_path, index=False)
+print(f"\nTuning results saved to {output_path}")
